@@ -13,10 +13,13 @@ from tkinter.filedialog import askdirectory
 
 data_structure = {}
 df_train = None
+train_size = None
 df_test = None
+test_size = None
 path = ""
 lower = {}
 upper = {}
+num_of_bins = 0
 
 
 #  --------------------------------------  This function activate when the user press "Browse"
@@ -35,19 +38,18 @@ def setLocation():
 
 #  --------------------------------------  This function activate when the user press "Build"
 def trainModel():
-    global df_train
     global data_structure
     global path
-
-    df_train = None
+    global num_of_bins
     data_structure = {}
 
     train_file_path = path + "/train.csv"
     structure_file_path = path + "/Structure.txt"
+    test_file_path = path + "/test.csv"
 
     try:
         num_of_bins = int(tf_DiscretizationBins.get())
-        if num_of_bins < 0:
+        if num_of_bins <= 0:
             messagebox.showerror("Naive Bayes Classifier","Negative integer, please enter a positive integer")
             return
     except ValueError:
@@ -57,15 +59,47 @@ def trainModel():
     if (os.path.exists(structure_file_path) == False):
         messagebox.showerror("Naive Bayes Classifier", "Structure.txt file was not found in directory:" + path)
         return
-    if (os.path.exists(train_file_path) == False):
-        messagebox.showerror("Naive Bayes Classifier", "train.csv file was not found in directory:" + path)
-        return
 
     data_structure = loadStructure(structure_file_path)
-    df_train = prepareData(train_file_path, num_of_bins)
+    prepareData(train_file_path,test_file_path, num_of_bins)
 
     messagebox.showinfo("Naive Bayes Classifier", "Building classifier using train - set is done!")
     btn_Classify.config(state='normal')
+
+
+def combainDataFrame(train_file_path,test_file_path):
+    global train_size
+    global test_size
+
+    if (os.path.exists(train_file_path) == False):
+        messagebox.showerror("Naive Bayes Classifier", "train.csv file was not found in directory:" + path)
+        return
+    if (os.path.exists(test_file_path) == False):
+        messagebox.showerror("Naive Bayes Classifier", "test.csv file has not found in directory:" + path)
+        return
+
+    df1 = pd.read_csv(train_file_path)
+    train_size = len(df1)
+    df2 = pd.read_csv(test_file_path)
+    test_size = len(df2)
+
+    if train_size < 2:
+        messagebox.showerror("Naive Bayes Classifier", "The train file does not have enough records")
+        return
+    if test_size < 2:
+        messagebox.showerror("Naive Bayes Classifier", "The test file does not have enough records")
+        return
+
+    df = df1.append(df2)
+    if len(df) > 0:
+        for key in data_structure.keys():
+            if not key in df1.columns:
+                messagebox.showerror("Naive Bayes Classifier", "The train file miss the " +key +" feature" )
+                return
+            if not key in df2.columns:
+                messagebox.showerror("Naive Bayes Classifier", "The test file miss the " +key +" feature" )
+                return
+    return df
 
 
 def loadStructure(structure_file_path):
@@ -83,42 +117,48 @@ def loadStructure(structure_file_path):
     return data_structure
 
 
-def prepareData(data_path, num_of_bins):
+def prepareData(train_file_path,test_file_path, num_of_bins):
     global lower
     global upper
-    df = pd.read_csv(data_path)
+    global df_train
+    global df_test
 
-    for key in data_structure.keys():
-        data = data_structure[key]
-        df[key].replace('', np.nan, inplace=True)
+    df = combainDataFrame(train_file_path, test_file_path)
+    df.to_csv("combains_file.csv") # todo delete this
 
-        if (data == 'NUMERIC'):
-            li = list(pd.unique(df[key]))
-            n = len(li)
-            if n == 3 and df[key].isnull().values.any():
-                must_common = stats.mode(df[key])
-                df[key].replace(np.nan, must_common, inplace=True)
-            else:
-                # if there is nan value - full it with the mean value of the column according to the class
-                key_mean_value = df.pivot_table(key, columns='class', aggfunc='mean')
-                for classification in data_structure['class']:
-                    df.loc[(df['class'] == classification) & (np.isnan(df[key])), key] = key_mean_value[classification][key]
+    if len(df) > 0:
+        for key in data_structure.keys():
+            data = data_structure[key]
+            df[key].replace('', np.nan, inplace=True)
 
-                if (df_train is None):
+            if (data == 'NUMERIC'):
+                li = list(pd.unique(df[key]))
+                n = len(li)
+                if n == 3 and df[key].isnull().values.any():
+                    must_common = stats.mode(df[key])
+                    df[key].replace(np.nan, must_common, inplace=True)
+                else:
+                    # if there is nan value - full it with the mean value of the column according to the class
+                    key_mean_value = df.pivot_table(key, columns='class', aggfunc='mean')
+                    for classification in data_structure['class']:
+                        df.loc[(df['class'] == classification) & (np.isnan(df[key])), key] = key_mean_value[classification][key]
+
+
                     lower[key] = min(df[key])
                     upper[key] = max(df[key])
 
-                li = list(pd.unique(df[key]))
-                n = len(li)
-                if n > num_of_bins:
-                    equalWidth(num_of_bins, df, key)
+                    li = list(pd.unique(df[key]))
+                    n = len(li)
+                    if n > num_of_bins:
+                        equalWidth(num_of_bins, df, key)
 
-        # else if the attribute is categorical
-        else:
-            must_common = stats.mode(df[key])
-            df[key].replace(np.nan, must_common, inplace=True)
+            # else if the attribute is categorical
+            else:
+                must_common = stats.mode(df[key])
+                df[key].replace(np.nan, must_common, inplace=True)
 
-    return df
+        df_train = df[0:train_size]
+        df_test = df[train_size:len(df)]
 
 
 def equalWidth(num_of_bins, df, attribute):
@@ -141,25 +181,8 @@ def equalWidth(num_of_bins, df, attribute):
 
 #  --------------------------------------  This function activate when the user press "Classify"
 def runPredict():
-    global df_test
-    global num_of_bins
     global path
-    try:
-        num_of_bins = int(tf_DiscretizationBins.get())
-        if num_of_bins < 0:
-            messagebox.showerror("Naive Bayes Classifier", "Negative integer, please enter a positive integer")
-            return
-    except ValueError:
-        messagebox.showerror("Naive Bayes Classifier", "Please enter a positive integer")
-        return
 
-    test_file_path = path + "/test.csv"
-
-    if (os.path.exists(test_file_path) == False):
-        messagebox.showerror("Naive Bayes Classifier", "test.csv file has not found in directory:" + path)
-        return
-
-    df_test = prepareData(test_file_path, num_of_bins)
     result = NaiveBayesClassifier(df_test)
     writeResult(result)
     messagebox.showinfo("Naive Bayes Classifier",
@@ -168,6 +191,7 @@ def runPredict():
     root.quit()
 
 def NaiveBayesClassifier(df_test_param):
+    global num_of_bins
     global df_train
     global data_structure
 
